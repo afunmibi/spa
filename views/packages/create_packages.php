@@ -1,118 +1,158 @@
+<?php
+// create_package.php
 
+// 1. Include the Database Connection
+require_once dirname(__DIR__, 2) . '/db.php'; 
+
+$success_message = '';
+$error_message = '';
+$allowed_plans = ['basic', 'standard', 'premium', 'custom']; 
+
+// --- 2. Check for Form Submission ---
+if (isset($_POST['create_package'])) {
+    
+    // --- 3. Data Validation and Sanitization ---
+    $required_fields = ['package_name', 'package_description', 'package_price', 'package_plan', 'package_code'];
+    foreach ($required_fields as $field) {
+        if (empty($_POST[$field])) {
+            $error_message = "Error: The field '" . str_replace('_', ' ', $field) . "' is required.";
+            break;
+        }
+    }
+
+    if (empty($error_message)) {
+        // Sanitize and validate inputs
+        $packageName = trim($_POST['package_name']);
+        $packageDescription = trim($_POST['package_description']);
+        $packagePlan = trim(strtolower($_POST['package_plan'])); // Convert to lowercase for ENUM check
+        $packageCode = trim(strtoupper($_POST['package_code']));
+
+        // Validate Price
+        $packagePrice = filter_var($_POST['package_price'], FILTER_VALIDATE_FLOAT);
+        if ($packagePrice === false || $packagePrice <= 0) {
+            $error_message = "Error: Package price must be a valid positive number.";
+        }
+        
+        // Validate ENUM plan
+        if (!in_array($packagePlan, $allowed_plans)) {
+            $error_message = "Error: Package plan must be one of: " . implode(', ', $allowed_plans);
+        }
+    }
+
+    // Only proceed to DB if no errors were found
+    if (empty($error_message)) {
+        
+        // --- 4. Prepare and Execute SQL Statement (MySQLi) ---
+        $sql = "INSERT INTO packages (package_name, package_description, package_price, package_plan, package_code) 
+                 VALUES (?, ?, ?, ?, ?)";
+
+        // Start Transaction Management 
+        $mysqli->begin_transaction(); 
+
+        try {
+            $stmt = $mysqli->prepare($sql);
+            
+            if ($stmt === false) {
+                throw new Exception("MySQLi Prepare failed: " . $mysqli->error);
+            }
+
+            // Bind parameters: ssds (s=string, d=double/float)
+            $stmt->bind_param("ssdss", $packageName, $packageDescription, $packagePrice, $packagePlan, $packageCode);
+            
+            if (!$stmt->execute()) {
+                 throw new Exception("MySQLi Execute failed: " . $stmt->error, $stmt->errno);
+            }
+            
+            $mysqli->commit();
+
+            // --- 5. Success Handling ---
+            $lastId = $mysqli->insert_id;
+            $success_message = "✅ Success! Package **{$packageName}** created (ID: **{$lastId}**, Code: **{$packageCode}**).";
+            
+            // Clear post data 
+            $_POST = array(); 
+
+        } catch (Exception $e) {
+            // --- 6. Error Handling ---
+            $mysqli->rollback(); 
+            
+            // 1062 is the MySQL error code for Duplicate entry for key (UNIQUE constraint)
+            if ($e->getCode() == 1062) {
+                 $error_message = "Error: A package with the code **{$packageCode}** already exists. Please choose a unique code.";
+            } else {
+                error_log("SQL Error: " . $e->getMessage());
+                $error_message = "A system error occurred during insertion. Code: " . $e->getCode();
+            }
+        } finally {
+            if (isset($stmt)) {
+                 $stmt->close();
+            }
+        }
+    }
+}
+// HTML form for package creation
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Create Package</title>
-    <!-- Tailwind CSS link -->
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
-    <style>
-        /* Custom styles for focus glow */
-        .input-focus-ring:focus {
-            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.5); /* Indigo-500 equivalent */
-        }
-    </style>
 </head>
 <body class="bg-gray-50 min-h-screen flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
     
     <div class="max-w-xl w-full space-y-8 bg-white p-10 rounded-xl shadow-2xl">
         
         <div class="text-center">
-            <h1 class="text-4xl font-extrabold text-gray-900">
-                📦 Create a New Package
-            </h1>
-            <p class="mt-2 text-sm text-gray-600">
-                Define the details for a new service or product offering.
-            </p>
+            <h1 class="text-4xl font-extrabold text-gray-900">📦 Create a New Package</h1>
         </div>
+
+        <?php if (!empty($success_message)): ?>
+            <div class="p-4 bg-green-100 border border-green-400 text-green-700 rounded-lg" role="alert"><p><?php echo $success_message; ?></p></div>
+        <?php endif; ?>
         
+        <?php if (!empty($error_message)): ?>
+            <div class="p-4 bg-red-100 border border-red-400 text-red-700 rounded-lg" role="alert"><p><?php echo $error_message; ?></p></div>
+        <?php endif; ?>
+
         <form action="create_package.php" method="POST" class="mt-8 space-y-6">
             
-            <!-- Package Name -->
             <div>
                 <label for="package_name" class="block text-sm font-medium text-gray-700 mb-1">Package Name:</label>
-                <input 
-                    type="text" 
-                    id="package_name" 
-                    name="package_name" 
-                    required 
-                    placeholder="e.g., Enterprise Tier"
-                    class="w-full px-4 py-2 border border-gray-300 rounded-lg input-focus-ring focus:border-indigo-500 transition duration-150"
-                >
+                <input type="text" id="package_name" name="package_name" required value="<?php echo htmlspecialchars($_POST['package_name'] ?? ''); ?>">
             </div>
             
-            <!-- Package Description -->
             <div>
                 <label for="package_description" class="block text-sm font-medium text-gray-700 mb-1">Package Description:</label>
-                <textarea 
-                    id="package_description" 
-                    name="package_description" 
-                    rows="4"
-                    required
-                    placeholder="A brief summary of what this package includes."
-                    class="w-full px-4 py-2 border border-gray-300 rounded-lg input-focus-ring focus:border-indigo-500 transition duration-150 resize-y"
-                ></textarea>
+                <textarea id="package_description" name="package_description" rows="4" required><?php echo htmlspecialchars($_POST['package_description'] ?? ''); ?></textarea>
             </div>
             
-            <!-- Package Price -->
             <div>
-                <label for="package_price" class="block text-sm font-medium text-gray-700 mb-1">Package Price (USD):</label>
-                <input 
-                    type="number" 
-                    id="package_price" 
-                    name="package_price" 
-                    required 
-                    min="0.01"
-                    step="0.01"
-                    placeholder="99.99"
-                    class="w-full px-4 py-2 border border-gray-300 rounded-lg input-focus-ring focus:border-indigo-500 transition duration-150"
-                >
+                <label for="package_price" class="block text-sm font-medium text-gray-700 mb-1">Package Price (₦):</label>
+                <input type="number" id="package_price" name="package_price" required min="0.01" step="0.01" value="<?php echo htmlspecialchars($_POST['package_price'] ?? ''); ?>">
             </div>
             
-            <!-- Package Plan (Select) -->
             <div>
                 <label for="package_plan" class="block text-sm font-medium text-gray-700 mb-1">Package Plan Level:</label>
-                <select 
-                    id="package_plan" 
-                    name="package_plan" 
-                    required
-                    class="w-full px-4 py-2 border border-gray-300 bg-white rounded-lg input-focus-ring focus:border-indigo-500 transition duration-150 appearance-none"
-                    style="background-image: url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2020%2020%22%3E%3Cpath%20d%3D%22M9.293%2012.95l.707.707L15.657%208l-1.414-1.414L10%2010.828%205.757%206.586%204.343%208z%22%2F%3E%3C%2Fsvg%3E'); background-repeat: no-repeat; background-position: right 0.75rem center; background-size: 0.65em 0.65em;"
-                >
-                    <option value="" disabled selected>Select a plan level</option>
-                    <option value="basic">Basic</option>
-                    <option value="standard">Standard</option>
-                    <option value="premium">Premium</option>
-                    <option value="custom">Custom</option>
+                <select id="package_plan" name="package_plan" required>
+                    <?php foreach ($allowed_plans as $plan): ?>
+                        <option value="<?php echo $plan; ?>" <?php echo (($_POST['package_plan'] ?? '') === $plan) ? 'selected' : ''; ?>>
+                            <?php echo ucwords($plan); ?>
+                        </option>
+                    <?php endforeach; ?>
                 </select>
             </div>
 
-            <!-- Package Code (Now Alphanumeric) -->
             <div>
-                <label for="package_code" class="block text-sm font-medium text-gray-700 mb-1">Package Code (Alphanumeric ID):</label>
-                <input 
-                    type="text" 
-                    id="package_code" 
-                    name="package_code" 
-                    required 
-                    placeholder="Unique Code (e.g., PRO-2024-A)"
-                    class="w-full px-4 py-2 border border-gray-300 rounded-lg input-focus-ring focus:border-indigo-500 transition duration-150"
-                >
+                <label for="package_code" class="block text-sm font-medium text-gray-700 mb-1">Package Code (Unique):</label>
+                <input type="text" id="package_code" name="package_code" required value="<?php echo htmlspecialchars($_POST['package_code'] ?? ''); ?>">
             </div>
             
-            <!-- Submit Button -->
             <div>
-                <button 
-                    type="submit" 
-                    name="create_package"
-                    class="w-full flex justify-center py-2 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition duration-200"
-                >
-                    🚀 Create Package
-                </button>
+                <button type="submit" name="create_package">🚀 Create Package</button>
             </div>
         </form>
     </div>
-    
 </body>
 </html>

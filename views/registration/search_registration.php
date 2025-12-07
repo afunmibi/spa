@@ -44,12 +44,14 @@
         <!-- Utility Bar -->
         <div class="flex flex-col sm:flex-row justify-between items-center mb-6 space-y-3 sm:space-y-0">
             <div id="authStatus" class="text-xs text-gray-600 font-medium">Using PHP/MySQL Backend</div>
-            <button id="addEnrolleeBtn" class="bg-indigo-600 text-white px-4 py-2 rounded-lg shadow-md hover:bg-indigo-700 transition duration-150 ease-in-out text-sm font-semibold disabled:opacity-50" onclick="showModal('add')">
-                + Register New Enrollee
-            </button>
+            <div class="flex items-center space-x-2">
+                <a id="addEnrolleeBtn" href="create_registration.php" class="inline-block bg-indigo-600 text-white px-4 py-2 rounded-lg shadow-md hover:bg-indigo-700 transition duration-150 ease-in-out text-sm font-semibold">+ Register New Enrollee</a>
+                <a href="policy_noANDpackageBenefits.php" class="inline-block bg-gray-100 text-gray-800 px-3 py-2 rounded-lg shadow-sm hover:bg-gray-200 text-sm">Policy Search</a>
+            </div>
         </div>
 
         <!-- Enrollee Data Table -->
+
         <div class="overflow-x-auto rounded-lg shadow-lg border border-gray-200">
             <table class="min-w-full divide-y divide-gray-200">
                 <thead class="bg-gray-50">
@@ -59,14 +61,16 @@
                           <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Policy No</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden sm:table-cell">Phone No</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider hidden md:table-cell">Date of Birth</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Packages</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                     </tr>
-                </thead>
+                <head>
                 <tbody id="policyTableBody" class="bg-white divide-y divide-gray-200 max-h-96 overflow-y-auto block">
                     <!-- Enrollee rows will be injected here by JavaScript -->
                     <tr>
-                        <td colspan="5" class="text-center py-6 text-gray-500 italic">Fetching enrollee data...</td>
+                        <td colspan="6" class="text-center py-6 text-gray-500 italic">Fetching enrollee data...</td>
                     </tr>
+                    <?php if (file_exists(__DIR__ . '/../../csrf.php')) { require_once __DIR__ . '/../../csrf.php'; echo csrf_meta_tag(); } ?>
                 </tbody>
             </table>
         </div>
@@ -133,7 +137,8 @@
         const modalTitle = document.getElementById('modalTitle');
 
         // --- API Endpoints (You must create these PHP files) ---
-        const API_BASE = '/api/';
+        // The application is served from /spa/ in this XAMPP setup, point API_BASE there
+        const API_BASE = '/spa/api/';
         const ENDPOINTS = {
             FETCH_ALL: API_BASE + 'enrollees.php', // GET: Returns array of all enrollees
             ADD: API_BASE + 'add_enrollee.php',     // POST: Data in JSON format
@@ -227,11 +232,14 @@
 
         // --- Backend Communication Functions (PHP/MySQLi) ---
 
+        function escapeHtml(s) { return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+
         /**
          * Fetches all enrollee data from the PHP backend.
          */
         async function fetchEnrolleesFromBackend() {
-            policyTableBody.innerHTML = `<tr><td colspan="5" class="text-center py-6 text-indigo-500 italic">Fetching enrollee data...</td></tr>`;
+            policyTableBody.innerHTML = `<tr><td colspan="6" class="text-center py-6 text-indigo-500 italic">Fetching enrollee data...</td></tr>`;
             try {
                 const response = await fetch(ENDPOINTS.FETCH_ALL);
                 if (!response.ok) {
@@ -239,13 +247,15 @@
                 }
                 // Expects an array of objects from the PHP script
                 const data = await response.json(); 
-                
-                // Assuming your PHP returns fields: id (Registration ID), name_of_enrollee, phone_no, date_of_birth
+
+                // Map backend fields to the client-side shape used by the UI
                 enrollees = data.map(item => ({
                     id: String(item.id), // Ensure ID is treated as a string for searching
-                    name_of_enrollee: item.name_of_enrollee,
-                    phone_no: item.phone_no,
-                    date_of_birth: item.date_of_birth,
+                    policy_no: item.policy_no || '',
+                    name_of_enrollee: item.name_of_enrollee || item.principal_name || '',
+                    phone_no: item.phone_no || item.phone || '',
+                    date_of_birth: item.date_of_birth || item.dob || '',
+                    plan_type: item.plan_type || null,
                 }));
 
                 // Initial render
@@ -254,7 +264,7 @@
             } catch (error) {
                 console.error("Error fetching enrollees: ", error);
                 showMessage(`Failed to load data from ${ENDPOINTS.FETCH_ALL}. Check PHP script and network.`, true);
-                policyTableBody.innerHTML = `<tr><td colspan="5" class="text-center py-6 text-red-500">Error: Could not load data.</td></tr>`;
+                policyTableBody.innerHTML = `<tr><td colspan="6" class="text-center py-6 text-red-500">Error: Could not load data.</td></tr>`;
             }
         }
 
@@ -344,7 +354,7 @@
 
             if (data.length === 0) {
                 const row = document.createElement('tr');
-                row.innerHTML = `<td colspan="5" class="text-center py-6 text-gray-500 italic">${enrollees.length === 0 ? 'No enrollees found in database.' : 'No matching enrollees found.'}</td>`;
+                row.innerHTML = `<td colspan="6" class="text-center py-6 text-gray-500 italic">${enrollees.length === 0 ? 'No enrollees found in database.' : 'No matching enrollees found.'}</td>`;
                 policyTableBody.appendChild(row);
                 return;
             }
@@ -355,16 +365,21 @@
                 // JSON.stringify needs to be escaped for the inline onclick handler
                 const enrolleeJson = JSON.stringify(enrollee).replace(/"/g, '&quot;'); 
                 
+                const pkgHtml = (enrollee.packages && enrollee.packages.length) ? (
+                    '<div class="text-sm text-gray-700">' + enrollee.packages.map(p => `<div class="pb-1">` + escapeHtml(p.package_name) + ' <span class="text-xs text-gray-500">(' + escapeHtml(p.package_plan) + ')</span><div class="text-xs text-gray-400">' + escapeHtml(p.package_description) + '</div></div>').join('') + '</div>'
+                ) : '<div class="text-sm text-gray-500">No package</div>';
+
                 row.innerHTML = `
                     <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${enrollee.id}</td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">${enrollee.name_of_enrollee}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">${enrollee.policy_no}</td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700 hidden sm:table-cell">${enrollee.phone_no}</td>
                     <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700 hidden md:table-cell">${formatDate(enrollee.date_of_birth)}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-700">${pkgHtml}</td>
                     <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                        <button onclick="showModal('edit', ${enrolleeJson})" 
-                            class="text-indigo-600 hover:text-indigo-900 mr-3">Edit</button>
-                        <button onclick="showConfirmModal('${enrollee.id}')" 
-                            class="text-red-600 hover:text-red-900">Delete</button>
+                        <a href="create_registration.php?id=${enrollee.id}" class="text-green-600 hover:text-green-900 mr-3">View</a>
+                        <a href="update_registration.php?id=${enrollee.id}" class="text-indigo-600 hover:text-indigo-900 mr-3">Edit</a>
+                        <a href="delete_registration.php?id=${enrollee.id}" class="text-red-600 hover:text-red-900">Delete</a>
                     </td>
                 `;
                 policyTableBody.appendChild(row);
@@ -403,5 +418,6 @@
         window.onload = fetchEnrolleesFromBackend;
 
     </script>
+    <script src="/spa/assets/js/csrf_fetch.js"></script>
 </body>
 </html>

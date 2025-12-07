@@ -4,18 +4,33 @@
 // 1. Start session for connection/error handling
 session_start();
 
-// Check if the database configuration file exists and include it.
-if (!file_exists('../config/db.php')) {
-    die("Error: Database configuration file 'config/db.php' not found. Please create it.");
+// --- DATABASE CONNECTION SETUP ---
+// Define the path to the database configuration file.
+$db_path = dirname(__DIR__, 2) . '/db.php';
+
+// Check if the database configuration file exists.
+if (!file_exists($db_path)) {
+    die("Error: Database configuration file '{$db_path}' not found. Please create it and ensure it defines the function get_db_connection().");
 }
-require_once '../config/db.php'; 
+
+// 2. Include the Database Connection function (now defines get_db_connection())
+require_once $db_path; 
+// --- END DATABASE CONNECTION SETUP ---
 
 $packages = [];
 $error = null;
 $searchTerm = '';
 
+// Attempt to get the database connection object
+$conn = get_db_connection();
+
+// Set error if connection failed
+if ($conn === null) {
+    $error = "Failed to establish a database connection. Check 'db.php'.";
+}
+
+
 // --- 3. Function to render the table body rows ---
-// We create this function so we can use it both for the initial page load AND for AJAX responses.
 function render_package_rows($packages) {
     $html = '';
     
@@ -41,40 +56,34 @@ function render_package_rows($packages) {
 
         $html .= '
         <tr class="hover:bg-gray-50 transition duration-150">
-            <!-- Package Code -->
             <td class="px-6 py-4 whitespace-nowrap text-sm font-semibold text-indigo-600">
                 ' . htmlspecialchars($pkg['package_code']) . '
             </td>
             
-            <!-- Name & Description -->
             <td class="px-6 py-4">
                 <div class="text-sm font-medium text-gray-900">' . htmlspecialchars($pkg['package_name']) . '</div>
                 <div class="text-xs text-gray-500 truncate w-64">' . htmlspecialchars($pkg['package_description']) . '</div>
             </td>
             
-            <!-- Plan Badge -->
             <td class="px-6 py-4 whitespace-nowrap">
                 <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-' . $color . '-100 text-' . $color . '-800 capitalize">
                     ' . htmlspecialchars($pkg['package_plan']) . '
                 </span>
             </td>
             
-            <!-- Price -->
             <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 text-right">
                 $' . number_format($pkg['package_price'], 2) . '
             </td>
             
-            <!-- Created Date -->
             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                 ' . date('Y-m-d', strtotime($pkg['created_at'])) . '
             </td>
 
-            <!-- Actions (Edit and Delete) -->
             <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                 <a href="edit_package.php?code=' . urlencode($pkg['package_code']) . '" class="text-indigo-600 hover:text-indigo-900 transition duration-150 mr-4">Edit</a>
                 <a href="delete_package.php?code=' . urlencode($pkg['package_code']) . '" 
-                   onclick="return confirm(\'Are you sure you want to delete package: ' . htmlspecialchars($pkg['package_name'], ENT_QUOTES) . ' (' . htmlspecialchars($pkg['package_code'], ENT_QUOTES) . ')? This action cannot be undone.\')" 
-                   class="text-red-600 hover:text-red-900 transition duration-150">Delete</a>
+                    onclick="return confirm(\'Are you sure you want to delete package: ' . htmlspecialchars($pkg['package_name'], ENT_QUOTES) . ' (' . htmlspecialchars($pkg['package_code'], ENT_QUOTES) . ')? This action cannot be undone.\')" 
+                    class="text-red-600 hover:text-red-900 transition duration-150">Delete</a>
             </td>
         </tr>';
     }
@@ -83,52 +92,68 @@ function render_package_rows($packages) {
 
 
 // --- 2. Database Retrieval (for both full page load and AJAX) ---
-if (isset($_GET['search']) && !empty(trim($_GET['search']))) {
-    $searchTerm = trim($_GET['search']);
-    $searchWildcard = "%" . $searchTerm . "%"; 
-    
-    $sql = "SELECT package_name, package_description, package_price, package_plan, package_code, created_at 
-            FROM packages 
-            WHERE package_code LIKE ? OR package_name LIKE ? OR package_description LIKE ?
-            ORDER BY package_id DESC";
-
-    if ($stmt = $conn->prepare($sql)) {
-        $stmt->bind_param("sss", $searchWildcard, $searchWildcard, $searchWildcard);
-        $stmt->execute();
-        $result = $stmt->get_result();
+if ($conn !== null) { // Only proceed if connection is successful
+    if (isset($_GET['search']) && !empty(trim($_GET['search']))) {
+        $searchTerm = trim($_GET['search']);
+        $searchWildcard = "%" . $searchTerm . "%"; 
         
-        while ($row = $result->fetch_assoc()) {
-            $packages[] = $row;
-        }
-        $stmt->close();
-    } else {
-        $error = "Database query preparation failed: " . $conn->error;
-    }
+        // Using $conn->prepare() for security on search terms
+        $sql = "SELECT package_name, package_description, package_price, package_plan, package_code, created_at 
+                FROM packages 
+                WHERE package_code LIKE ? OR package_name LIKE ? OR package_description LIKE ?
+                ORDER BY package_id DESC";
 
-} else {
-    // No search term, fetch all
-    $sql = "SELECT package_name, package_description, package_price, package_plan, package_code, created_at FROM packages ORDER BY package_id DESC";
-
-    if ($result = $conn->query($sql)) {
-        while ($row = $result->fetch_assoc()) {
-            $packages[] = $row;
+        if ($stmt = $conn->prepare($sql)) {
+            // Bind the same wildcard value to all three placeholders
+            $stmt->bind_param("sss", $searchWildcard, $searchWildcard, $searchWildcard);
+            $stmt->execute();
+            $result = $stmt->get_result();
+            
+            while ($row = $result->fetch_assoc()) {
+                $packages[] = $row;
+            }
+            $stmt->close();
+        } else {
+            $error = "Database query preparation failed: " . $conn->error;
         }
-        $result->free();
+
     } else {
-        $error = "Database query failed: " . $conn->error;
+        // No search term, fetch all
+        $sql = "SELECT package_name, package_description, package_price, package_plan, package_code, created_at FROM packages ORDER BY package_id DESC";
+
+        if ($result = $conn->query($sql)) {
+            while ($row = $result->fetch_assoc()) {
+                $packages[] = $row;
+            }
+            $result->free();
+        } else {
+            $error = "Database query failed: " . $conn->error;
+        }
     }
 }
+
 
 // --- 4. AJAX Response Handler ---
 if (isset($_GET['is_ajax']) && $_GET['is_ajax'] === 'true') {
     // Only output the table body rows and exit
     header('Content-Type: text/html');
-    echo render_package_rows($packages);
+    
+    // If we have an error, show an error message instead of table rows
+    if ($error) {
+        echo '<tr><td colspan="6" class="px-6 py-4 text-center text-red-500 font-semibold">AJAX Error: ' . htmlspecialchars($error) . '</td></tr>';
+    } else {
+        echo render_package_rows($packages);
+    }
+
+    // Close connection if it's open before exiting AJAX call
+    if (isset($conn) && $conn->ping()) {
+        $conn->close();
+    }
     exit;
 }
 
-// Close connection if not closed in AJAX exit
-if ($conn->ping()) {
+// Close connection if open for the full page load
+if (isset($conn) && $conn->ping()) {
     $conn->close();
 }
 
@@ -139,7 +164,6 @@ if ($conn->ping()) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>View All Packages</title>
-    <!-- Tailwind CSS link -->
     <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
 </head>
 <body class="bg-gray-100 min-h-screen">
@@ -155,7 +179,6 @@ if ($conn->ping()) {
             </a>
         </div>
 
-        <!-- Search Input (no form needed for live search) -->
         <div class="mb-6 flex space-x-3">
             <input 
                 type="text" 
@@ -167,13 +190,12 @@ if ($conn->ping()) {
             >
             <button 
                 id="clear-search-btn"
-                class="px-4 py-2 bg-gray-300 text-gray-700 font-medium rounded-lg shadow-md hover:bg-gray-400 transition duration-150 flex items-center hidden"
+                class="px-4 py-2 bg-gray-300 text-gray-700 font-medium rounded-lg shadow-md hover:bg-gray-400 transition duration-150 flex items-center <?php echo (empty($searchTerm) ? 'hidden' : ''); ?>"
             >
                 Clear Search
             </button>
         </div>
 
-        <!-- Display Success/Error Messages from previous actions (e.g., Edit, Delete) -->
         <?php if (isset($_SESSION['success_message'])): ?>
             <div class="bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded-lg relative mb-6" role="alert">
                 <?php echo htmlspecialchars($_SESSION['success_message']); unset($_SESSION['success_message']); ?>
@@ -190,7 +212,6 @@ if ($conn->ping()) {
             </div>
         <?php else: ?>
 
-        <!-- Responsive Table Container -->
         <div class="shadow-lg overflow-hidden border-b border-gray-200 sm:rounded-lg">
             <table class="min-w-full divide-y divide-gray-200">
                 <thead class="bg-gray-50">
@@ -210,7 +231,6 @@ if ($conn->ping()) {
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                             Created
                         </th>
-                        <!-- New Actions Column -->
                         <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                             Actions
                         </th>
@@ -230,7 +250,6 @@ if ($conn->ping()) {
         <?php endif; ?>
     </div>
 
-    <!-- Live Search JavaScript -->
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             const searchInput = document.getElementById('search-input');
@@ -255,9 +274,10 @@ if ($conn->ping()) {
                     // Update table body
                     tbody.innerHTML = html;
 
-                    // Update package count (simple count of rows after fetch)
+                    // Update package count
                     const rowCount = tbody.querySelectorAll('tr').length;
-                    // Adjust count if the 'no results' row is present
+                    
+                    // Check for the "No packages found" row (colspan="6")
                     if (rowCount === 1 && tbody.querySelector('td[colspan="6"]')) {
                         countDisplay.textContent = '0';
                     } else {
@@ -285,7 +305,7 @@ if ($conn->ping()) {
                 // Clear any existing timeout
                 clearTimeout(searchTimeout);
 
-                // Set a new timeout to wait for user to finish typing (300ms debounce)
+                // Set a new timeout for debounce
                 searchTimeout = setTimeout(() => {
                     fetchResults(query);
                 }, 300);
