@@ -5,8 +5,8 @@ require_once 'db.php'; // Assumes this file establishes $conn
 $login_error = '';
 $register_success_message = '';
 
-1. Check for and retrieve messages from the session
-This catches successful registration messages from register.php
+// 1. Check for and retrieve messages from the session
+// This catches successful registration messages from register.php
 if (isset($_SESSION['register_success'])) {
     $register_success_message = $_SESSION['register_success'];
     unset($_SESSION['register_success']);
