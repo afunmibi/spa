@@ -5,18 +5,18 @@ require_once 'db.php'; // Assumes this file establishes $conn
 $login_error = '';
 $register_success_message = '';
 
-// 1. Check for and retrieve messages from the session
-// This catches successful registration messages from register.php
-// if (isset($_SESSION['register_success'])) {
-//     $register_success_message = $_SESSION['register_success'];
-//     unset($_SESSION['register_success']);
-// }
+1. Check for and retrieve messages from the session
+This catches successful registration messages from register.php
+if (isset($_SESSION['register_success'])) {
+    $register_success_message = $_SESSION['register_success'];
+    unset($_SESSION['register_success']);
+}
 
-// // This catches local login errors
-// if (isset($_SESSION['login_error'])) {
-//     $login_error = $_SESSION['login_error'];
-//     unset($_SESSION['login_error']);
-// }
+// This catches local login errors
+if (isset($_SESSION['login_error'])) {
+    $login_error = $_SESSION['login_error'];
+    unset($_SESSION['login_error']);
+}
 
 // 2. Process form submission
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['submit_login'])) {
